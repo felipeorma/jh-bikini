@@ -4,6 +4,7 @@
 # Autor: Felipe O.
 # Ejecuta: streamlit run app_bikini_growth_streamlit.py
 
+
 import os, io, math, textwrap
 from dataclasses import dataclass
 from typing import List, Dict, Tuple, Optional
@@ -39,7 +40,12 @@ def load_venta_excel(file_or_path) -> pd.DataFrame:
     """
     if isinstance(file_or_path, str) and not os.path.exists(file_or_path):
         raise FileNotFoundError(f"No existe: {file_or_path}")
-    xl = pd.ExcelFile(file_or_path)
+    try:
+        xl = pd.ExcelFile(file_or_path, engine="openpyxl")
+    except ImportError as e:
+        import streamlit as st
+        st.error("Falta la librería **openpyxl** para leer archivos .xlsx. Agrega `openpyxl` a `requirements.txt` y vuelve a desplegar.")
+        st.stop()
     frames = []
     for sheet in xl.sheet_names:
         try:
@@ -47,7 +53,7 @@ def load_venta_excel(file_or_path) -> pd.DataFrame:
         except:
             # si hay hojas no-numéricas, se ignoran
             continue
-        df = pd.read_excel(xl, sheet_name=sheet)
+        df = pd.read_excel(xl, sheet_name=sheet, engine="openpyxl")
         df = _clean_cols(df)
         # normaliza columnas conocidas
         # keep only relevant columns that exist
@@ -207,6 +213,41 @@ def estimate_turnover(df_proj: pd.DataFrame, avg_inventory_units: float) -> pd.D
 
 st.set_page_config(page_title="Proyección — Tienda de Bikinis (Chile)", layout="wide")
 
+
+# === Sidebar glossary ===
+with st.sidebar:
+    st.title("📘 Guía rápida")
+    st.markdown("""
+**Qué ingresar en cada campo (inputs):**
+
+- **Crecimiento YoY (tiendas actuales)**: % esperado vs el **total anual del último año**. Ej.: 0.15 = +15%. Usa histórico comparable (mismo mix de tiendas).  
+- **Tiendas actuales**: cantidad de tiendas **operando hoy** (fin de año base). Si cierras una, descuéntala.
+- **Nuevas tiendas a abrir (próximo año)**: cuántas aperturas planeas en el año N+1. Si abres a mitad de año, el **ramp‑up** ajusta el aporte mensual.
+- **Promoción meses de baja (uplift %)**: % adicional de ventas en los meses seleccionados por campañas/ofertas. Ej.: 15 significa +15%.
+- **Precio promedio por prenda (CLP)**: precio medio de venta por unidad. **Sé consistente**: si tus ventas históricas incluyen IVA, acá también.
+- **Ítems por ticket (promedio)**: unidades promedio por transacción (ej.: 1.4). Si no lo sabes, usa `Unidades vendidas / Nº tickets`.
+- **Costo variable por prenda (CLP)**: costo unitario (tela, confección, etiquetado, empaque, flete unitario, aranceles). **Sin** costos fijos.
+- **Costo fijo mensual por tienda (CLP)**: arriendo, sueldos, servicios, base marketing, seguridad, etc. **Por tienda**.
+- **Inventario promedio mensual (unidades)**: stock medio de unidades disponibles. Si no tienes dato, déjalo en 0 (omitirá *turnover*).
+- **Meses de baja temporada**: meses donde el tráfico cae (ej.: mayo–agosto). Se les aplica el *uplift*.
+
+**Qué significan las métricas (outputs):**
+
+- **Ticket promedio (CLP)** = *Precio por prenda* × *Ítems por ticket*.
+- **Units Sold** = *Projected Revenue* / *Precio por prenda*.
+- **Gross Margin %** = (*Precio* − *Costo variable*) / *Precio*.
+- **BreakEven Revenue** = (*Costo fijo mensual por tienda* × *N° total de tiendas*) / *Gross Margin*.
+- **Above/Below BreakEven**: diferencia entre lo proyectado y el punto de equilibrio (positivo = sobre el BE).
+- **Inventory Turnover (x)** = *Units Sold* / *Inventario promedio* (si informas inventario).
+- **Existing Stores / New Stores**: descomposición del ingreso proyectado por origen.
+- **Estacionalidad**: porcentaje promedio de ventas por mes, calculado desde el histórico.
+- **Proyección Base**: total anual del último año × (1 + **YoY**) distribuido por estacionalidad.
+- **YoY (Year‑over‑Year)**: variación interanual en % vs el año previo.
+
+**Tips:** Mantén **coherencia contable**: si tus ventas históricas incluyen IVA/descuentos, replica ese criterio en los inputs de precio y costo.
+""")
+
+
 st.title("📈 Proyección de crecimiento — Tienda de Bikinis (Chile)")
 st.caption("Modelo simple con estacionalidad + escenarios por nuevas tiendas, promociones y punto de equilibrio.")
 
@@ -265,27 +306,28 @@ seasonality = build_seasonality(valid_hist, metric_col="Venta Histórica")
 
 with st.container():
     c1, c2, c3, c4 = st.columns(4)
-    yoy = c1.slider("Crecimiento YoY (tiendas actuales)", min_value=-0.5, max_value=1.0, value=0.15, step=0.01, help="Variación vs. total del último año.")
-    current_stores = c2.number_input("Tiendas actuales", min_value=1, value=1, step=1)
-    new_stores = c3.number_input("Nuevas tiendas a abrir (próximo año)", min_value=0, value=1, step=1)
-    low_uplift = c4.slider("Promoción meses de baja (uplift %)", min_value=0, max_value=100, value=15, step=5)
+    yoy = c1.slider("Crecimiento YoY (tiendas actuales)", min_value=-0.5, max_value=1.0, value=0.15, step=0.01, help="Variación interanual esperada vs el total del último año (ej.: 0.15 = +15%).")
+    current_stores = c2.number_input("Tiendas actuales", min_value=1, value=1, step=1, help="Número de tiendas operando al cierre del año base (sumar físicas activas).")
+    new_stores = c3.number_input("Nuevas tiendas a abrir (próximo año)", min_value=0, value=1, step=1, help="Aperturas planificadas en el año N+1. El ramp‑up ajusta el aporte mensual las primeras etapas.")
+    low_uplift = c4.slider("Promoción meses de baja (uplift %)", min_value=0, max_value=100, value=15, step=5, help="Boost porcentual aplicado a los meses de baja seleccionados (ej.: 15 = +15%).")
 
 with st.container():
     c5, c6, c7, c8 = st.columns(4)
-    price_per_unit = c5.number_input("Precio promedio por prenda (CLP)", min_value=1000.0, value=24990.0, step=1000.0, format="%.0f")
-    units_per_ticket = c6.number_input("Ítems por ticket (promedio)", min_value=0.1, value=1.4, step=0.1)
-    var_cost_unit = c7.number_input("Costo variable por prenda (CLP)", min_value=500.0, value=9000.0, step=500.0, format="%.0f")
-    fixed_cost_store = c8.number_input("Costo fijo mensual por tienda (CLP)", min_value=100000.0, value=4000000.0, step=100000.0, format="%.0f")
+    price_per_unit = c5.number_input("Precio promedio por prenda (CLP)", min_value=1000.0, value=24990.0, step=1000.0, format="%.0f", help="Precio medio por unidad. Si tu histórico incluye IVA, usa precio con IVA aquí también.")
+    units_per_ticket = c6.number_input("Ítems por ticket (promedio)", min_value=0.1, value=1.4, step=0.1, help="Unidades promedio por transacción. Si no lo sabes: Unidades vendidas / Nº tickets.")
+    var_cost_unit = c7.number_input("Costo variable por prenda (CLP)", min_value=500.0, value=9000.0, step=500.0, format="%.0f", help="COGS unitario: tela, confección, etiquetas, empaque, flete unitario, aranceles. Sin costos fijos.")
+    fixed_cost_store = c8.number_input("Costo fijo mensual por tienda (CLP)", min_value=100000.0, value=4000000.0, step=100000.0, format="%.0f", help="Arriendo, sueldos, servicios, base de marketing, seguridad, etc. Monto mensual por tienda.")
 
 with st.container():
     c9, c10, c11 = st.columns(3)
-    avg_inventory_units = c9.number_input("Inventario promedio mensual (unidades)", min_value=0.0, value=1200.0, step=50.0)
-    ramp1 = c10.slider("Ramp-up tienda nueva — mes 1", min_value=0.1, max_value=1.0, value=0.4, step=0.05)
-    ramp2 = c11.slider("Ramp-up tienda nueva — mes 2", min_value=0.1, max_value=1.0, value=0.6, step=0.05)
+    avg_inventory_units = c9.number_input("Inventario promedio mensual (unidades)", min_value=0.0, value=1200.0, step=50.0, help="Unidades promedio en stock durante el mes. Si se desconoce, usa 0 para omitir el cálculo de turnover.")
+    ramp1 = c10.slider("Ramp-up tienda nueva — mes 1", min_value=0.1, max_value=1.0, value=0.4, step=0.05, help="Fracción de las ventas de una tienda madura que estimas en el primer mes tras abrir.")
+    ramp2 = c11.slider("Ramp-up tienda nueva — mes 2", min_value=0.1, max_value=1.0, value=0.6, step=0.05, help="Fracción estimada del segundo mes. El modelo usa 80% el tercer mes y 100% desde el cuarto.")
 
 low_season_months = st.multiselect(
     "Meses de baja temporada (para aplicar uplift/promos)",
-    options=SPANISH_MONTHS, default=["Mayo","Junio","Julio","Agosto"]
+    options=SPANISH_MONTHS, default=["Mayo","Junio","Julio","Agosto"],
+    help="Selecciona los meses con peor desempeño para aplicar el uplift de promociones."
 )
 low_month_nums = [MONTH_TO_NUM[m] for m in low_season_months]
 
@@ -395,4 +437,3 @@ with st.expander("Notas del modelo"):
 - **Unidades a fabricar** = ingreso proyectado / precio promedio por prenda.
 - **Rotación** es aproximada: unidades vendidas / inventario promedio (si lo informas).
 """)
-
