@@ -1,7 +1,7 @@
 
 # app_bikini_growth_streamlit.py
 # Streamlit app: Proyección de crecimiento (tienda de bikinis - Chile)
-# Autor: ChatGPT (para Felipe) — Estilo "experto Harvard en economía/aproyecciones"
+# Autor: Felipe O.
 # Ejecuta: streamlit run app_bikini_growth_streamlit.py
 
 import os, io, math, textwrap
